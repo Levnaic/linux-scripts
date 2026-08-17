@@ -1,0 +1,409 @@
+#!/bin/bash
+# Ubuntu 24.04 Terminal Setup Script
+# Replicates Powerlevel10k + fzf + bat configuration
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}  Ubuntu Terminal Setup Script v1.0    ${NC}"
+echo -e "${GREEN}========================================${NC}"
+
+# Check if running as root
+if [[ $EUID -eq 0 ]]; then
+    echo -e "${RED}ERROR: Do not run this script as root!${NC}"
+    echo -e "${YELLOW}Run as a normal user with sudo privileges.${NC}"
+    exit 1
+fi
+
+# Get the actual user (in case of sudo)
+USER_HOME=$HOME
+USER_NAME=$(whoami)
+
+# Function to check command success
+check_success() {
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ $1${NC}"
+    else
+        echo -e "${RED}✗ $1 failed!${NC}"
+        exit 1
+    fi
+}
+
+# 1. Update package list
+echo -e "\n${GREEN}==> Updating package list...${NC}"
+sudo apt update -qq
+check_success "Package list updated"
+
+# 2. Install required packages
+echo -e "\n${GREEN}==> Installing required packages...${NC}"
+sudo apt install -y zsh git fzf bat curl wget
+check_success "Packages installed"
+
+# 3. Create alias for bat (Ubuntu uses batcat)
+echo -e "\n${GREEN}==> Setting up bat alias...${NC}"
+if ! grep -q "alias bat=batcat" ~/.zshrc 2>/dev/null; then
+    echo "alias bat=batcat" >> ~/.zshrc
+    check_success "bat alias added to .zshrc"
+else
+    echo -e "${YELLOW}bat alias already exists${NC}"
+fi
+
+# 4. Install Oh My Zsh if not present
+echo -e "\n${GREEN}==> Installing Oh My Zsh...${NC}"
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+    check_success "Oh My Zsh installed"
+else
+    echo -e "${YELLOW}Oh My Zsh already installed${NC}"
+fi
+
+# 5. Install zsh-autosuggestions plugin
+echo -e "\n${GREEN}==> Installing zsh-autosuggestions plugin...${NC}"
+if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions" ]; then
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
+        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions 2>/dev/null
+    check_success "zsh-autosuggestions installed"
+else
+    echo -e "${YELLOW}zsh-autosuggestions already installed${NC}"
+fi
+
+# 6. Install zsh-syntax-highlighting plugin
+echo -e "\n${GREEN}==> Installing zsh-syntax-highlighting plugin...${NC}"
+if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting" ]; then
+    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git \
+        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting 2>/dev/null
+    check_success "zsh-syntax-highlighting installed"
+else
+    echo -e "${YELLOW}zsh-syntax-highlighting already installed${NC}"
+fi
+
+# 7. Install Powerlevel10k theme
+echo -e "\n${GREEN}==> Installing Powerlevel10k theme...${NC}"
+if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then
+    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k 2>/dev/null
+    check_success "Powerlevel10k installed"
+else
+    echo -e "${YELLOW}Powerlevel10k already installed${NC}"
+fi
+
+# 8. Configure .zshrc
+echo -e "\n${GREEN}==> Configuring .zshrc...${NC}"
+
+# Backup existing .zshrc
+if [ -f "$HOME/.zshrc" ]; then
+    cp "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%Y%m%d_%H%M%S)"
+    echo -e "${YELLOW}Backed up existing .zshrc${NC}"
+fi
+
+# Create .zshrc with proper configuration
+cat > "$HOME/.zshrc" << 'EOF'
+# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+# Path to Oh My Zsh
+export ZSH="$HOME/.oh-my-zsh"
+
+# Theme
+ZSH_THEME="powerlevel10k/powerlevel10k"
+
+# Plugins
+plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
+
+source $ZSH/oh-my-zsh.sh
+
+# Aliases
+alias bat=batcat
+
+# Custom function: fzf file finder with preview
+ff() {
+    find . -type f | fzf --preview 'batcat --color=always --line-range :500 {}' --preview-window 'right:60%,border-left'
+}
+
+# Load Powerlevel10k config
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+
+# Load fzf
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+EOF
+
+check_success ".zshrc configured"
+
+# 9. Install Powerlevel10k configuration
+echo -e "\n${GREEN}==> Installing Powerlevel10k configuration...${NC}"
+
+# Backup existing .p10k.zsh
+if [ -f "$HOME/.p10k.zsh" ]; then
+    cp "$HOME/.p10k.zsh" "$HOME/.p10k.zsh.backup.$(date +%Y%m%d_%H%M%S)"
+    echo -e "${YELLOW}Backed up existing .p10k.zsh${NC}"
+fi
+
+# Copy the Powerlevel10k config from your current setup
+cat > "$HOME/.p10k.zsh" << 'EOF'
+# Generated by Powerlevel10k configuration wizard on 2026-08-17 at 19:12 UTC.
+# Based on romkatv/powerlevel10k/config/p10k-classic.zsh, checksum 08429.
+# Wizard options: powerline, classic, ascii, dark, 24h time, 1 line, compact, concise,
+# transient_prompt, instant_prompt=verbose.
+# Type `p10k configure` to generate another config.
+
+# Temporarily change options.
+'builtin' 'local' '-a' 'p10k_config_opts'
+[[ ! -o 'aliases'         ]] || p10k_config_opts+=('aliases')
+[[ ! -o 'sh_glob'         ]] || p10k_config_opts+=('sh_glob')
+[[ ! -o 'no_brace_expand' ]] || p10k_config_opts+=('no_brace_expand')
+'builtin' 'setopt' 'no_aliases' 'no_sh_glob' 'brace_expand'
+
+() {
+  emulate -L zsh -o extended_glob
+
+  # Unset all configuration options.
+  unset -m '(POWERLEVEL9K_*|DEFAULT_USER)~POWERLEVEL9K_GITSTATUS_DIR'
+
+  # Zsh >= 5.1 is required.
+  [[ $ZSH_VERSION == (5.<1->*|<6->.*) ]] || return
+
+  # The list of segments shown on the left.
+  typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(
+    dir                     # current directory
+    vcs                     # git status
+  )
+
+  # The list of segments shown on the right.
+  typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
+    status                  # exit code of the last command
+    command_execution_time  # duration of the last command
+    background_jobs         # presence of background jobs
+    context                 # user@hostname
+    time                    # current time
+  )
+
+  # Defines character set used by powerlevel10k.
+  typeset -g POWERLEVEL9K_MODE=ascii
+  typeset -g POWERLEVEL9K_ICON_PADDING=none
+  typeset -g POWERLEVEL9K_ICON_BEFORE_CONTENT=
+
+  # Add an empty line before each prompt.
+  typeset -g POWERLEVEL9K_PROMPT_ADD_NEWLINE=false
+
+  # Connect left prompt lines with these symbols.
+  typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_PREFIX='%240F╭-'
+  typeset -g POWERLEVEL9K_MULTILINE_NEWLINE_PROMPT_PREFIX='%240F├-'
+  typeset -g POWERLEVEL9K_MULTILINE_LAST_PROMPT_PREFIX='%240F╰-'
+  # Connect right prompt lines with these symbols.
+  typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_SUFFIX='%240F-╮'
+  typeset -g POWERLEVEL9K_MULTILINE_NEWLINE_PROMPT_SUFFIX='%240F-┤'
+  typeset -g POWERLEVEL9K_MULTILINE_LAST_PROMPT_SUFFIX='%240F-╯'
+
+  # Filler between left and right prompt on the first prompt line.
+  typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR=' '
+  typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_BACKGROUND=
+  typeset -g POWERLEVEL9K_MULTILINE_NEWLINE_PROMPT_GAP_BACKGROUND=
+  if [[ $POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR != ' ' ]]; then
+    typeset -g POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND=240
+    typeset -g POWERLEVEL9K_EMPTY_LINE_LEFT_PROMPT_FIRST_SEGMENT_END_SYMBOL='%{%}'
+    typeset -g POWERLEVEL9K_EMPTY_LINE_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL='%{%}'
+  fi
+
+  # Default background color.
+  typeset -g POWERLEVEL9K_BACKGROUND=236
+
+  # Separators
+  typeset -g POWERLEVEL9K_LEFT_SUBSEGMENT_SEPARATOR='%244F|'
+  typeset -g POWERLEVEL9K_RIGHT_SUBSEGMENT_SEPARATOR='%244F|'
+  typeset -g POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR=''
+  typeset -g POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR=''
+  typeset -g POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL=''
+  typeset -g POWERLEVEL9K_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL=''
+  typeset -g POWERLEVEL9K_LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL=''
+  typeset -g POWERLEVEL9K_RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL=''
+  typeset -g POWERLEVEL9K_EMPTY_LINE_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL=
+
+  # Directory
+  typeset -g POWERLEVEL9K_DIR_FOREGROUND=31
+  typeset -g POWERLEVEL9K_SHORTEN_STRATEGY=truncate_to_unique
+  typeset -g POWERLEVEL9K_SHORTEN_DELIMITER=
+  typeset -g POWERLEVEL9K_DIR_SHORTENED_FOREGROUND=103
+  typeset -g POWERLEVEL9K_DIR_ANCHOR_FOREGROUND=39
+  typeset -g POWERLEVEL9K_DIR_ANCHOR_BOLD=true
+  typeset -g POWERLEVEL9K_DIR_MAX_LENGTH=80
+  typeset -g POWERLEVEL9K_DIR_MIN_COMMAND_COLUMNS=40
+  typeset -g POWERLEVEL9K_DIR_MIN_COMMAND_COLUMNS_PCT=50
+  typeset -g POWERLEVEL9K_DIR_HYPERLINK=false
+  typeset -g POWERLEVEL9K_DIR_SHOW_WRITABLE=v3
+  typeset -g POWERLEVEL9K_DIR_CLASSES=()
+
+  # Git status
+  typeset -g POWERLEVEL9K_VCS_BRANCH_ICON=
+  typeset -g POWERLEVEL9K_VCS_UNTRACKED_ICON='?'
+  typeset -g POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY=-1
+  typeset -g POWERLEVEL9K_VCS_DISABLED_WORKDIR_PATTERN='~'
+  typeset -g POWERLEVEL9K_VCS_DISABLE_GITSTATUS_FORMATTING=true
+  typeset -g POWERLEVEL9K_VCS_CONTENT_EXPANSION='${$((my_git_formatter(1)))+${my_git_format}}'
+  typeset -g POWERLEVEL9K_VCS_LOADING_CONTENT_EXPANSION='${$((my_git_formatter(0)))+${my_git_format}}'
+  typeset -g POWERLEVEL9K_VCS_{STAGED,UNSTAGED,UNTRACKED,CONFLICTED,COMMITS_AHEAD,COMMITS_BEHIND}_MAX_NUM=-1
+  typeset -g POWERLEVEL9K_VCS_VISUAL_IDENTIFIER_COLOR=76
+  typeset -g POWERLEVEL9K_VCS_LOADING_VISUAL_IDENTIFIER_COLOR=244
+  typeset -g POWERLEVEL9K_VCS_VISUAL_IDENTIFIER_EXPANSION=
+  typeset -g POWERLEVEL9K_VCS_BACKENDS=(git)
+  typeset -g POWERLEVEL9K_VCS_CLEAN_FOREGROUND=76
+  typeset -g POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND=76
+  typeset -g POWERLEVEL9K_VCS_MODIFIED_FOREGROUND=178
+
+  function my_git_formatter() {
+    emulate -L zsh
+    if [[ -n $P9K_CONTENT ]]; then
+      typeset -g my_git_format=$P9K_CONTENT
+      return
+    fi
+    if (( $1 )); then
+      local       meta='%246F'
+      local      clean='%76F'
+      local   modified='%178F'
+      local  untracked='%39F'
+      local conflicted='%196F'
+    else
+      local       meta='%244F'
+      local      clean='%244F'
+      local   modified='%244F'
+      local  untracked='%244F'
+      local conflicted='%244F'
+    fi
+    local res
+    if [[ -n $VCS_STATUS_LOCAL_BRANCH ]]; then
+      local branch=${(V)VCS_STATUS_LOCAL_BRANCH}
+      (( $#branch > 32 )) && branch[13,-13]=".."
+      res+="${clean}${(g::)POWERLEVEL9K_VCS_BRANCH_ICON}${branch//\%/%%}"
+    fi
+    if [[ -n $VCS_STATUS_TAG && -z $VCS_STATUS_LOCAL_BRANCH ]]; then
+      local tag=${(V)VCS_STATUS_TAG}
+      (( $#tag > 32 )) && tag[13,-13]=".."
+      res+="${meta}#${clean}${tag//\%/%%}"
+    fi
+    [[ -z $VCS_STATUS_LOCAL_BRANCH && -z $VCS_STATUS_TAG ]] &&
+      res+="${meta}@${clean}${VCS_STATUS_COMMIT[1,8]}"
+    if [[ -n ${VCS_STATUS_REMOTE_BRANCH:#$VCS_STATUS_LOCAL_BRANCH} ]]; then
+      res+="${meta}:${clean}${(V)VCS_STATUS_REMOTE_BRANCH//\%/%%}"
+    fi
+    if [[ $VCS_STATUS_COMMIT_SUMMARY == (|*[^[:alnum:]])(wip|WIP)(|[^[:alnum:]]*) ]]; then
+      res+=" ${modified}wip"
+    fi
+    if (( VCS_STATUS_COMMITS_AHEAD || VCS_STATUS_COMMITS_BEHIND )); then
+      (( VCS_STATUS_COMMITS_BEHIND )) && res+=" ${clean}<${VCS_STATUS_COMMITS_BEHIND}"
+      (( VCS_STATUS_COMMITS_AHEAD && !VCS_STATUS_COMMITS_BEHIND )) && res+=" "
+      (( VCS_STATUS_COMMITS_AHEAD  )) && res+="${clean}>${VCS_STATUS_COMMITS_AHEAD}"
+    fi
+    (( VCS_STATUS_PUSH_COMMITS_BEHIND )) && res+=" ${clean}<-${VCS_STATUS_PUSH_COMMITS_BEHIND}"
+    (( VCS_STATUS_PUSH_COMMITS_AHEAD && !VCS_STATUS_PUSH_COMMITS_BEHIND )) && res+=" "
+    (( VCS_STATUS_PUSH_COMMITS_AHEAD  )) && res+="${clean}->${VCS_STATUS_PUSH_COMMITS_AHEAD}"
+    (( VCS_STATUS_STASHES        )) && res+=" ${clean}*${VCS_STATUS_STASHES}"
+    [[ -n $VCS_STATUS_ACTION     ]] && res+=" ${conflicted}${VCS_STATUS_ACTION}"
+    (( VCS_STATUS_NUM_CONFLICTED )) && res+=" ${conflicted}~${VCS_STATUS_NUM_CONFLICTED}"
+    (( VCS_STATUS_NUM_STAGED     )) && res+=" ${modified}+${VCS_STATUS_NUM_STAGED}"
+    (( VCS_STATUS_NUM_UNSTAGED   )) && res+=" ${modified}!${VCS_STATUS_NUM_UNSTAGED}"
+    (( VCS_STATUS_NUM_UNTRACKED  )) && res+=" ${untracked}${(g::)POWERLEVEL9K_VCS_UNTRACKED_ICON}${VCS_STATUS_NUM_UNTRACKED}"
+    (( VCS_STATUS_HAS_UNSTAGED == -1 )) && res+=" ${modified}-"
+    typeset -g my_git_format=$res
+  }
+  functions -M my_git_formatter 2>/dev/null
+
+  # Status
+  typeset -g POWERLEVEL9K_STATUS_EXTENDED_STATES=true
+  typeset -g POWERLEVEL9K_STATUS_OK=true
+  typeset -g POWERLEVEL9K_STATUS_OK_FOREGROUND=70
+  typeset -g POWERLEVEL9K_STATUS_OK_VISUAL_IDENTIFIER_EXPANSION='ok'
+  typeset -g POWERLEVEL9K_STATUS_OK_PIPE=true
+  typeset -g POWERLEVEL9K_STATUS_OK_PIPE_FOREGROUND=70
+  typeset -g POWERLEVEL9K_STATUS_OK_PIPE_VISUAL_IDENTIFIER_EXPANSION='ok'
+  typeset -g POWERLEVEL9K_STATUS_ERROR=true
+  typeset -g POWERLEVEL9K_STATUS_ERROR_FOREGROUND=160
+  typeset -g POWERLEVEL9K_STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION='err'
+  typeset -g POWERLEVEL9K_STATUS_ERROR_SIGNAL=true
+  typeset -g POWERLEVEL9K_STATUS_ERROR_SIGNAL_FOREGROUND=160
+  typeset -g POWERLEVEL9K_STATUS_VERBOSE_SIGNAME=false
+  typeset -g POWERLEVEL9K_STATUS_ERROR_SIGNAL_VISUAL_IDENTIFIER_EXPANSION=
+  typeset -g POWERLEVEL9K_STATUS_ERROR_PIPE=true
+  typeset -g POWERLEVEL9K_STATUS_ERROR_PIPE_FOREGROUND=160
+  typeset -g POWERLEVEL9K_STATUS_ERROR_PIPE_VISUAL_IDENTIFIER_EXPANSION='err'
+
+  # Command execution time
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_PRECISION=0
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=248
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FORMAT='d h m s'
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION=
+
+  # Background jobs
+  typeset -g POWERLEVEL9K_BACKGROUND_JOBS_VERBOSE=false
+  typeset -g POWERLEVEL9K_BACKGROUND_JOBS_FOREGROUND=37
+
+  # Context (user@hostname)
+  typeset -g POWERLEVEL9K_CONTEXT_ROOT_FOREGROUND=178
+  typeset -g POWERLEVEL9K_CONTEXT_{REMOTE,REMOTE_SUDO}_FOREGROUND=180
+  typeset -g POWERLEVEL9K_CONTEXT_FOREGROUND=180
+  typeset -g POWERLEVEL9K_CONTEXT_ROOT_TEMPLATE='%B%n@%m'
+  typeset -g POWERLEVEL9K_CONTEXT_{REMOTE,REMOTE_SUDO}_TEMPLATE='%n@%m'
+  typeset -g POWERLEVEL9K_CONTEXT_TEMPLATE='%n@%m'
+  typeset -g POWERLEVEL9K_CONTEXT_{DEFAULT,SUDO}_{CONTENT,VISUAL_IDENTIFIER}_EXPANSION=
+
+  # Time
+  typeset -g POWERLEVEL9K_TIME_FOREGROUND=66
+  typeset -g POWERLEVEL9K_TIME_FORMAT='%D{%H:%M:%S}'
+  typeset -g POWERLEVEL9K_TIME_UPDATE_ON_COMMAND=false
+  typeset -g POWERLEVEL9K_TIME_VISUAL_IDENTIFIER_EXPANSION=
+
+  # Transient prompt
+  typeset -g POWERLEVEL9K_TRANSIENT_PROMPT=always
+
+  # Instant prompt
+  typeset -g POWERLEVEL9K_INSTANT_PROMPT=verbose
+
+  # Hot reload
+  typeset -g POWERLEVEL9K_DISABLE_HOT_RELOAD=true
+
+  (( ! $+functions[p10k] )) || p10k reload
+}
+
+# Tell `p10k configure` which file it should overwrite.
+typeset -g POWERLEVEL9K_CONFIG_FILE=${${(%):-%x}:a}
+
+(( ${#p10k_config_opts} )) && setopt ${p10k_config_opts[@]}
+'builtin' 'unset' 'p10k_config_opts'
+EOF
+
+check_success ".p10k.zsh installed"
+
+# 10. Set Zsh as default shell
+echo -e "\n${GREEN}==> Setting Zsh as default shell...${NC}"
+if [[ "$SHELL" != "/bin/zsh" && "$SHELL" != "/usr/bin/zsh" ]]; then
+    chsh -s $(which zsh)
+    check_success "Default shell changed to zsh (requires logout/login)"
+else
+    echo -e "${YELLOW}Zsh is already the default shell${NC}"
+fi
+
+# 11. Final instructions
+echo -e "\n${GREEN}========================================${NC}"
+echo -e "${GREEN}  Setup Complete!                      ${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo -e ""
+echo -e "${YELLOW}IMPORTANT:${NC}"
+echo -e "1. Log out and log back in for changes to take effect"
+echo -e "2. On first login, the Powerlevel10k wizard will run"
+echo -e "3. If the wizard doesn't start, run: ${GREEN}p10k configure${NC}"
+echo -e ""
+echo -e "Custom functions available:"
+echo -e "  ${GREEN}ff${NC} - Fuzzy find files with preview"
+echo -e ""
+echo -e "${YELLOW}Backup files created:${NC}"
+ls -la ~/.zshrc.backup.* 2>/dev/null || echo "No backup files"
+ls -la ~/.p10k.zsh.backup.* 2>/dev/null || echo "No backup files"
+echo -e ""
+echo -e "${GREEN}Enjoy your new terminal setup! 🚀${NC}"
