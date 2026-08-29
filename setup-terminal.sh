@@ -12,6 +12,7 @@
 # It provides an interactive menu to:
 #   1. Install everything
 #   2. Uninstall (revert) changes - selectively or completely
+#      (including an option to force-remove pre-existing components)
 #
 # All changes are tracked in a state file so the uninstaller knows exactly
 # what was modified.
@@ -540,9 +541,14 @@ set_default_shell() {
 # Uninstall / revert functions
 #-------------------------------------------
 
-# Remove Oh My Zsh if it was installed by this script
+# Note: The functions below accept an optional "force" parameter.
+# When force=1, they will remove/restore regardless of whether the component
+# was originally installed by the script or pre-existing.
+
+# Remove Oh My Zsh
 uninstall_ohmyzsh() {
-    if [ "$OMZ_INSTALLED" -eq 1 ]; then
+    local force="$1"  # 0 or 1
+    if [ "$force" -eq 1 ] || [ "$OMZ_INSTALLED" -eq 1 ]; then
         if [ -d "$USER_HOME/.oh-my-zsh" ]; then
             warning_msg "Removing Oh My Zsh directory..."
             rm -rf "$USER_HOME/.oh-my-zsh"
@@ -551,16 +557,17 @@ uninstall_ohmyzsh() {
             info_msg "Oh My Zsh directory not found (maybe already removed)."
         fi
     else
-        info_msg "Oh My Zsh was pre-existing; not removed."
+        info_msg "Oh My Zsh was pre-existing; not removed (use force to override)."
     fi
 }
 
-# Remove a plugin directory if it was installed by this script
+# Remove a plugin directory
 uninstall_plugin() {
     local name="$1"
     local flag_var="$2"
     local dir="$3"
-    if [ "${!flag_var}" -eq 1 ]; then
+    local force="$4"  # 0 or 1
+    if [ "$force" -eq 1 ] || [ "${!flag_var}" -eq 1 ]; then
         if [ -d "$dir" ]; then
             warning_msg "Removing $name..."
             rm -rf "$dir"
@@ -569,54 +576,60 @@ uninstall_plugin() {
             info_msg "$name directory not found."
         fi
     else
-        info_msg "$name was pre-existing; not removed."
+        info_msg "$name was pre-existing; not removed (use force to override)."
     fi
 }
 
-# Remove Powerlevel10k theme if installed by this script
+# Remove Powerlevel10k theme
 uninstall_powerlevel10k() {
-    uninstall_plugin "Powerlevel10k" "P10K_INSTALLED" "$ZSH_CUSTOM/themes/powerlevel10k"
+    uninstall_plugin "Powerlevel10k" "P10K_INSTALLED" "$ZSH_CUSTOM/themes/powerlevel10k" "$1"
 }
 
 # Restore .zshrc from backup
 restore_zshrc() {
-    if [ -n "$ZSHRC_BACKUP" ] && [ -f "$ZSHRC_BACKUP" ]; then
-        warning_msg "Restoring .zshrc from backup $ZSHRC_BACKUP..."
-        cp "$ZSHRC_BACKUP" "$USER_HOME/.zshrc"
-        success_msg ".zshrc restored."
-        # Optionally keep backup, but we'll leave it
-    elif [ -z "$ZSHRC_BACKUP" ]; then
-        # No backup means .zshrc didn't exist before, so we should remove the one we created
-        if [ -f "$USER_HOME/.zshrc" ]; then
-            warning_msg "No backup found; .zshrc was created by this script. Removing it..."
-            rm -f "$USER_HOME/.zshrc"
-            success_msg ".zshrc removed."
+    local force="$1"
+    if [ "$force" -eq 1 ] || [ -n "$ZSHRC_BACKUP" ]; then
+        if [ -n "$ZSHRC_BACKUP" ] && [ -f "$ZSHRC_BACKUP" ]; then
+            warning_msg "Restoring .zshrc from backup $ZSHRC_BACKUP..."
+            cp "$ZSHRC_BACKUP" "$USER_HOME/.zshrc"
+            success_msg ".zshrc restored."
+        else
+            # No backup means .zshrc didn't exist before, so we should remove the one we created
+            if [ -f "$USER_HOME/.zshrc" ]; then
+                warning_msg "No backup found; .zshrc was created by this script. Removing it..."
+                rm -f "$USER_HOME/.zshrc"
+                success_msg ".zshrc removed."
+            fi
         fi
     else
-        warning_msg "Backup file $ZSHRC_BACKUP not found. Cannot restore .zshrc automatically."
+        info_msg ".zshrc was pre-existing; not restored (use force to remove the current one)."
     fi
 }
 
 # Restore .p10k.zsh from backup
 restore_p10k() {
-    if [ -n "$P10K_BACKUP" ] && [ -f "$P10K_BACKUP" ]; then
-        warning_msg "Restoring .p10k.zsh from backup $P10K_BACKUP..."
-        cp "$P10K_BACKUP" "$USER_HOME/.p10k.zsh"
-        success_msg ".p10k.zsh restored."
-    elif [ -z "$P10K_BACKUP" ]; then
-        if [ -f "$USER_HOME/.p10k.zsh" ]; then
-            warning_msg "No backup found; .p10k.zsh was created by this script. Removing it..."
-            rm -f "$USER_HOME/.p10k.zsh"
-            success_msg ".p10k.zsh removed."
+    local force="$1"
+    if [ "$force" -eq 1 ] || [ -n "$P10K_BACKUP" ]; then
+        if [ -n "$P10K_BACKUP" ] && [ -f "$P10K_BACKUP" ]; then
+            warning_msg "Restoring .p10k.zsh from backup $P10K_BACKUP..."
+            cp "$P10K_BACKUP" "$USER_HOME/.p10k.zsh"
+            success_msg ".p10k.zsh restored."
+        else
+            if [ -f "$USER_HOME/.p10k.zsh" ]; then
+                warning_msg "No backup found; .p10k.zsh was created by this script. Removing it..."
+                rm -f "$USER_HOME/.p10k.zsh"
+                success_msg ".p10k.zsh removed."
+            fi
         fi
     else
-        warning_msg "Backup file $P10K_BACKUP not found. Cannot restore .p10k.zsh automatically."
+        info_msg ".p10k.zsh was pre-existing; not restored (use force to remove the current one)."
     fi
 }
 
 # Restore default shell (if changed)
 restore_shell() {
-    if [ "$SHELL_CHANGED" -eq 1 ]; then
+    local force="$1"
+    if [ "$force" -eq 1 ] || [ "$SHELL_CHANGED" -eq 1 ]; then
         if [ -n "$PREVIOUS_SHELL" ] && [ -x "$PREVIOUS_SHELL" ]; then
             warning_msg "Reverting default shell to $PREVIOUS_SHELL..."
             chsh -s "$PREVIOUS_SHELL"
@@ -631,6 +644,7 @@ restore_shell() {
 
 # Remove packages installed by this script (with individual choice)
 remove_packages_menu() {
+    local force="$1"  # unused for now, but kept for consistency
     if [ ${#INSTALLED_PACKAGES[@]} -eq 0 ]; then
         info_msg "No packages were newly installed by this script."
         return
@@ -720,49 +734,50 @@ run_uninstall_menu() {
         echo "  6) Restore .p10k.zsh (from backup or remove if created)"
         echo "  7) Restore default shell"
         echo "  8) Remove installed packages (selective)"
-        echo "  9) Revert ALL changes (combination of all above)"
-        echo "  0) Return to main menu"
-        echo -n "Enter your choice [0-9]: "
+        echo "  9) Revert ALL changes (safe: only changes made by this script)"
+        echo " 10) Force remove EVERYTHING (including pre-existing components) *USE WITH CAUTION*"
+        echo "  q) Return to main menu"
+        echo -n "Enter your choice [1-10 or q]: "
         read choice
 
         case $choice in
             1)
-                uninstall_ohmyzsh
+                uninstall_ohmyzsh 0
                 ;;
             2)
-                uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+                uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" 0
                 ;;
             3)
-                uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+                uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" 0
                 ;;
             4)
-                uninstall_powerlevel10k
+                uninstall_powerlevel10k 0
                 ;;
             5)
-                restore_zshrc
+                restore_zshrc 0
                 ;;
             6)
-                restore_p10k
+                restore_p10k 0
                 ;;
             7)
-                restore_shell
+                restore_shell 0
                 ;;
             8)
-                remove_packages_menu
+                remove_packages_menu 0
                 ;;
             9)
-                echo -e "${YELLOW}This will revert all changes made by the script.${NC}"
+                echo -e "${YELLOW}This will revert all changes made by the script (but not pre-existing components).${NC}"
                 echo -n "Are you sure? (y/N): "
                 read confirm
                 if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                    uninstall_ohmyzsh
-                    uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
-                    uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
-                    uninstall_powerlevel10k
-                    restore_zshrc
-                    restore_p10k
-                    restore_shell
-                    remove_packages_menu
+                    uninstall_ohmyzsh 0
+                    uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" 0
+                    uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" 0
+                    uninstall_powerlevel10k 0
+                    restore_zshrc 0
+                    restore_p10k 0
+                    restore_shell 0
+                    remove_packages_menu 0
                     info_msg "All changes reverted. You may need to log out and back in."
                     # Optionally remove state file after full uninstall
                     rm -f "$STATE_FILE"
@@ -771,7 +786,32 @@ run_uninstall_menu() {
                     info_msg "Full uninstall cancelled."
                 fi
                 ;;
-            0)
+            10)
+                echo -e "${RED}WARNING: This will remove EVERYTHING, including components that were pre-existing!${NC}"
+                echo -e "${RED}This includes Oh My Zsh, plugins, theme, .zshrc, .p10k.zsh, and possibly packages.${NC}"
+                echo -n "Are you absolutely sure? (type 'yes' to confirm): "
+                read confirm
+                if [[ "$confirm" == "yes" ]]; then
+                    uninstall_ohmyzsh 1
+                    uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" 1
+                    uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" 1
+                    uninstall_powerlevel10k 1
+                    restore_zshrc 1
+                    restore_p10k 1
+                    restore_shell 1
+                    # For packages, we also remove all installed packages? Actually we should ask about packages separately.
+                    # Since force remove everything, we can remove all packages installed by script or all related packages.
+                    # We'll run the package removal menu but with a message.
+                    echo -e "${YELLOW}Now you will be asked about removing packages (if any were installed by the script).${NC}"
+                    remove_packages_menu 1
+                    info_msg "Force removal complete. You may need to log out and back in."
+                    rm -f "$STATE_FILE"
+                    info_msg "State file removed."
+                else
+                    info_msg "Force removal cancelled."
+                fi
+                ;;
+            q|Q)
                 return
                 ;;
             *)
@@ -796,8 +836,8 @@ main_menu() {
         echo "Please choose an option:"
         echo "  1) Install / Configure terminal environment"
         echo "  2) Uninstall / Revert changes"
-        echo "  3) Exit"
-        echo -n "Enter your choice [1-3]: "
+        echo "  q) Exit"
+        echo -n "Enter your choice [1-2 or q]: "
         read choice
 
         case $choice in
@@ -807,12 +847,12 @@ main_menu() {
             2)
                 run_uninstall_menu
                 ;;
-            3)
+            q|Q)
                 echo -e "${GREEN}Goodbye!${NC}"
                 exit 0
                 ;;
             *)
-                warning_msg "Invalid option. Please enter 1, 2, or 3."
+                warning_msg "Invalid option. Please enter 1, 2, or q."
                 sleep 1
                 ;;
         esac
