@@ -45,13 +45,23 @@ echo -e "\n${GREEN}==> Installing required packages...${NC}"
 sudo apt install -y zsh git fzf bat curl wget
 check_success "Packages installed"
 
-# 3. Create alias for bat (Ubuntu uses batcat)
-echo -e "\n${GREEN}==> Setting up bat alias...${NC}"
-if ! grep -q "alias bat=batcat" ~/.zshrc 2>/dev/null; then
-    echo "alias bat=batcat" >> ~/.zshrc
-    check_success "bat alias added to .zshrc"
+# 3. Setup bat (works on both Debian and Ubuntu)
+echo -e "\n${GREEN}==> Setting up bat...${NC}"
+if command -v batcat &> /dev/null; then
+    # Ubuntu uses batcat
+    if ! grep -q "alias bat=batcat" ~/.zshrc 2>/dev/null; then
+        echo "alias bat=batcat" >> ~/.zshrc
+        check_success "bat alias added (batcat)"
+    fi
+elif command -v bat &> /dev/null; then
+    # Debian uses bat directly
+    if ! grep -q "alias bat=" ~/.zshrc 2>/dev/null; then
+        # No alias needed, but we'll add one for consistency
+        echo "alias bat=bat" >> ~/.zshrc 2>/dev/null || true
+        check_success "bat already available as 'bat'"
+    fi
 else
-    echo -e "${YELLOW}bat alias already exists${NC}"
+    echo -e "${YELLOW}bat not found, skipping alias${NC}"
 fi
 
 # 4. Install Oh My Zsh if not present
