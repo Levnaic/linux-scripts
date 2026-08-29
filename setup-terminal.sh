@@ -1,119 +1,233 @@
 #!/bin/bash
-# Ubuntu 24.04 Terminal Setup Script
-# Replicates Powerlevel10k + fzf + bat configuration
+#===============================================================================
+# Terminal Setup Script for Debian/Ubuntu
+#===============================================================================
+# This script installs and configures a powerful terminal environment including:
+#   - Zsh with Oh My Zsh framework
+#   - Powerlevel10k theme
+#   - zsh-autosuggestions and zsh-syntax-highlighting plugins
+#   - fzf fuzzy finder with custom preview function
+#   - bat (batcat on Ubuntu) with alias
+#
+# It provides an interactive menu to:
+#   1. Install everything
+#   2. Uninstall (revert) changes - selectively or completely
+#
+# All changes are tracked in a state file so the uninstaller knows exactly
+# what was modified.
+#===============================================================================
 
 set -e  # Exit on error
 
-# Colors for output
+#-------------------------------------------
+# Color definitions for output
+#-------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Ubuntu Terminal Setup Script v1.0    ${NC}"
-echo -e "${GREEN}========================================${NC}"
-
-# Check if running as root
-if [[ $EUID -eq 0 ]]; then
-    echo -e "${RED}ERROR: Do not run this script as root!${NC}"
-    echo -e "${YELLOW}Run as a normal user with sudo privileges.${NC}"
-    exit 1
-fi
-
-# Get the actual user (in case of sudo)
-USER_HOME=$HOME
+#-------------------------------------------
+# Paths and variables
+#-------------------------------------------
+USER_HOME="$HOME"
 USER_NAME=$(whoami)
+STATE_FILE="$USER_HOME/.term_setup_state"
+BACKUP_DIR="$USER_HOME/.term_setup_backups"
+ZSH_CUSTOM="${ZSH_CUSTOM:-$USER_HOME/.oh-my-zsh/custom}"
 
-# Function to check command success
+#-------------------------------------------
+# Helper functions
+#-------------------------------------------
+# Print a success message
+success_msg() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+# Print an error message and exit
+error_msg() {
+    echo -e "${RED}✗ $1${NC}"
+    exit 1
+}
+
+# Print a warning message
+warning_msg() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+# Print an informational message
+info_msg() {
+    echo -e "${BLUE}ℹ $1${NC}"
+}
+
+# Check if previous command succeeded, otherwise exit
 check_success() {
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓ $1${NC}"
+        success_msg "$1"
     else
-        echo -e "${RED}✗ $1 failed!${NC}"
-        exit 1
+        error_msg "$1 failed!"
     fi
 }
 
-# 1. Update package list
-echo -e "\n${GREEN}==> Updating package list...${NC}"
-sudo apt update -qq
-check_success "Package list updated"
+# Write current state to the state file
+save_state() {
+    {
+        echo "# Terminal setup state - generated $(date)"
+        echo "OMZ_INSTALLED=$OMZ_INSTALLED"
+        echo "AUTOSUGGESTIONS_INSTALLED=$AUTOSUGGESTIONS_INSTALLED"
+        echo "SYNTAX_HIGHLIGHTING_INSTALLED=$SYNTAX_HIGHLIGHTING_INSTALLED"
+        echo "P10K_INSTALLED=$P10K_INSTALLED"
+        echo "ZSHRC_BACKUP=\"$ZSHRC_BACKUP\""
+        echo "P10K_BACKUP=\"$P10K_BACKUP\""
+        echo "SHELL_CHANGED=$SHELL_CHANGED"
+        echo "PREVIOUS_SHELL=\"$PREVIOUS_SHELL\""
+        echo "INSTALLED_PACKAGES=(${INSTALLED_PACKAGES[@]})"
+    } > "$STATE_FILE"
+    chmod 600 "$STATE_FILE"
+}
 
-# 2. Install required packages
-echo -e "\n${GREEN}==> Installing required packages...${NC}"
-sudo apt install -y zsh git fzf bat curl wget
-check_success "Packages installed"
-
-# 3. Setup bat (works on both Debian and Ubuntu)
-echo -e "\n${GREEN}==> Setting up bat...${NC}"
-if command -v batcat &> /dev/null; then
-    # Ubuntu uses batcat
-    if ! grep -q "alias bat=batcat" ~/.zshrc 2>/dev/null; then
-        echo "alias bat=batcat" >> ~/.zshrc
-        check_success "bat alias added (batcat)"
+# Load state from state file (if exists)
+load_state() {
+    if [ -f "$STATE_FILE" ]; then
+        # Source the state file to get variables
+        source "$STATE_FILE"
+        # Ensure arrays are properly initialized
+        if [ -z "${INSTALLED_PACKAGES+x}" ]; then
+            INSTALLED_PACKAGES=()
+        fi
+    else
+        # Default values
+        OMZ_INSTALLED=0
+        AUTOSUGGESTIONS_INSTALLED=0
+        SYNTAX_HIGHLIGHTING_INSTALLED=0
+        P10K_INSTALLED=0
+        ZSHRC_BACKUP=""
+        P10K_BACKUP=""
+        SHELL_CHANGED=0
+        PREVIOUS_SHELL=""
+        INSTALLED_PACKAGES=()
     fi
-elif command -v bat &> /dev/null; then
-    # Debian uses bat directly
-    if ! grep -q "alias bat=" ~/.zshrc 2>/dev/null; then
-        # No alias needed, but we'll add one for consistency
-        echo "alias bat=bat" >> ~/.zshrc 2>/dev/null || true
-        check_success "bat already available as 'bat'"
+}
+
+#-------------------------------------------
+# Installation functions
+#-------------------------------------------
+
+# Install required packages and record which ones were newly added
+install_packages() {
+    info_msg "Updating package list..."
+    sudo apt update -qq
+    check_success "Package list updated"
+
+    info_msg "Checking currently installed packages..."
+    # Create a snapshot of installed packages
+    local before_list=$(mktemp)
+    dpkg-query -W -f='${Package}\n' | sort > "$before_list"
+
+    info_msg "Installing required packages (zsh git fzf bat curl wget)..."
+    sudo apt install -y zsh git fzf bat curl wget
+    check_success "Packages installed"
+
+    local after_list=$(mktemp)
+    dpkg-query -W -f='${Package}\n' | sort > "$after_list"
+
+    # Find newly installed packages
+    local new_packages=()
+    while IFS= read -r pkg; do
+        if ! grep -qx "$pkg" "$before_list"; then
+            new_packages+=("$pkg")
+        fi
+    done < <(comm -13 "$before_list" "$after_list")
+
+    # Store the list of newly installed packages (may be empty if all were present)
+    INSTALLED_PACKAGES=("${new_packages[@]}")
+
+    # Clean up temp files
+    rm -f "$before_list" "$after_list"
+
+    if [ ${#INSTALLED_PACKAGES[@]} -gt 0 ]; then
+        info_msg "Newly installed packages: ${INSTALLED_PACKAGES[*]}"
+    else
+        info_msg "All required packages were already installed."
     fi
-else
-    echo -e "${YELLOW}bat not found, skipping alias${NC}"
-fi
+}
 
-# 4. Install Oh My Zsh if not present
-echo -e "\n${GREEN}==> Installing Oh My Zsh...${NC}"
-if [ ! -d "$HOME/.oh-my-zsh" ]; then
-    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-    check_success "Oh My Zsh installed"
-else
-    echo -e "${YELLOW}Oh My Zsh already installed${NC}"
-fi
+# Install Oh My Zsh
+install_ohmyzsh() {
+    if [ ! -d "$USER_HOME/.oh-my-zsh" ]; then
+        info_msg "Installing Oh My Zsh..."
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        check_success "Oh My Zsh installed"
+        OMZ_INSTALLED=1
+    else
+        warning_msg "Oh My Zsh already installed, skipping."
+        OMZ_INSTALLED=0
+    fi
+}
 
-# 5. Install zsh-autosuggestions plugin
-echo -e "\n${GREEN}==> Installing zsh-autosuggestions plugin...${NC}"
-if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions" ]; then
-    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
-        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions 2>/dev/null
-    check_success "zsh-autosuggestions installed"
-else
-    echo -e "${YELLOW}zsh-autosuggestions already installed${NC}"
-fi
+# Install zsh-autosuggestions plugin
+install_autosuggestions() {
+    local plugin_dir="$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+    if [ ! -d "$plugin_dir" ]; then
+        info_msg "Installing zsh-autosuggestions..."
+        git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$plugin_dir" 2>/dev/null
+        check_success "zsh-autosuggestions installed"
+        AUTOSUGGESTIONS_INSTALLED=1
+    else
+        warning_msg "zsh-autosuggestions already installed, skipping."
+        AUTOSUGGESTIONS_INSTALLED=0
+    fi
+}
 
-# 6. Install zsh-syntax-highlighting plugin
-echo -e "\n${GREEN}==> Installing zsh-syntax-highlighting plugin...${NC}"
-if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting" ]; then
-    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git \
-        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting 2>/dev/null
-    check_success "zsh-syntax-highlighting installed"
-else
-    echo -e "${YELLOW}zsh-syntax-highlighting already installed${NC}"
-fi
+# Install zsh-syntax-highlighting plugin
+install_syntax_highlighting() {
+    local plugin_dir="$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+    if [ ! -d "$plugin_dir" ]; then
+        info_msg "Installing zsh-syntax-highlighting..."
+        git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$plugin_dir" 2>/dev/null
+        check_success "zsh-syntax-highlighting installed"
+        SYNTAX_HIGHLIGHTING_INSTALLED=1
+    else
+        warning_msg "zsh-syntax-highlighting already installed, skipping."
+        SYNTAX_HIGHLIGHTING_INSTALLED=0
+    fi
+}
 
-# 7. Install Powerlevel10k theme
-echo -e "\n${GREEN}==> Installing Powerlevel10k theme...${NC}"
-if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then
-    git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
-        ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k 2>/dev/null
-    check_success "Powerlevel10k installed"
-else
-    echo -e "${YELLOW}Powerlevel10k already installed${NC}"
-fi
+# Install Powerlevel10k theme
+install_powerlevel10k() {
+    local theme_dir="$ZSH_CUSTOM/themes/powerlevel10k"
+    if [ ! -d "$theme_dir" ]; then
+        info_msg "Installing Powerlevel10k..."
+        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$theme_dir" 2>/dev/null
+        check_success "Powerlevel10k installed"
+        P10K_INSTALLED=1
+    else
+        warning_msg "Powerlevel10k already installed, skipping."
+        P10K_INSTALLED=0
+    fi
+}
 
-# 8. Configure .zshrc
-echo -e "\n${GREEN}==> Configuring .zshrc...${NC}"
+# Configure .zshrc (backup existing, then write new)
+configure_zshrc() {
+    info_msg "Configuring .zshrc..."
 
-# Backup existing .zshrc
-if [ -f "$HOME/.zshrc" ]; then
-    cp "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%Y%m%d_%H%M%S)"
-    echo -e "${YELLOW}Backed up existing .zshrc${NC}"
-fi
+    # Create backup directory if needed
+    mkdir -p "$BACKUP_DIR"
 
-# Create .zshrc with proper configuration
-cat > "$HOME/.zshrc" << 'EOF'
+    # Backup existing .zshrc if it exists
+    if [ -f "$USER_HOME/.zshrc" ]; then
+        local timestamp=$(date +%Y%m%d_%H%M%S)
+        ZSHRC_BACKUP="$BACKUP_DIR/zshrc.backup.$timestamp"
+        cp "$USER_HOME/.zshrc" "$ZSHRC_BACKUP"
+        success_msg "Backed up existing .zshrc to $ZSHRC_BACKUP"
+    else
+        ZSHRC_BACKUP=""
+        info_msg "No existing .zshrc found, will create new one."
+    fi
+
+    # Write new .zshrc
+    cat > "$USER_HOME/.zshrc" << 'EOF'
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
@@ -131,11 +245,20 @@ plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
 source $ZSH/oh-my-zsh.sh
 
 # Aliases
-alias bat=batcat
+# Ubuntu uses batcat, Debian uses bat; we handle both
+if command -v batcat &> /dev/null; then
+    alias bat=batcat
+elif command -v bat &> /dev/null; then
+    alias bat=bat
+fi
 
 # Custom function: fzf file finder with preview
 ff() {
-    find . -type f | fzf --preview 'batcat --color=always --line-range :500 {}' --preview-window 'right:60%,border-left'
+    local bat_cmd="batcat"
+    if ! command -v batcat &> /dev/null; then
+        bat_cmd="bat"
+    fi
+    find . -type f | fzf --preview "$bat_cmd --color=always --line-range :500 {}" --preview-window 'right:60%,border-left'
 }
 
 # Load Powerlevel10k config
@@ -144,20 +267,27 @@ ff() {
 # Load fzf
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 EOF
+    check_success ".zshrc configured"
+}
 
-check_success ".zshrc configured"
+# Configure Powerlevel10k (backup existing, then write new)
+configure_p10k() {
+    info_msg "Configuring Powerlevel10k (.p10k.zsh)..."
 
-# 9. Install Powerlevel10k configuration
-echo -e "\n${GREEN}==> Installing Powerlevel10k configuration...${NC}"
+    mkdir -p "$BACKUP_DIR"
 
-# Backup existing .p10k.zsh
-if [ -f "$HOME/.p10k.zsh" ]; then
-    cp "$HOME/.p10k.zsh" "$HOME/.p10k.zsh.backup.$(date +%Y%m%d_%H%M%S)"
-    echo -e "${YELLOW}Backed up existing .p10k.zsh${NC}"
-fi
+    if [ -f "$USER_HOME/.p10k.zsh" ]; then
+        local timestamp=$(date +%Y%m%d_%H%M%S)
+        P10K_BACKUP="$BACKUP_DIR/p10k.zsh.backup.$timestamp"
+        cp "$USER_HOME/.p10k.zsh" "$P10K_BACKUP"
+        success_msg "Backed up existing .p10k.zsh to $P10K_BACKUP"
+    else
+        P10K_BACKUP=""
+        info_msg "No existing .p10k.zsh found, will create new one."
+    fi
 
-# Copy the Powerlevel10k config from your current setup
-cat > "$HOME/.p10k.zsh" << 'EOF'
+    # Write .p10k.zsh (using the same content as original script)
+    cat > "$USER_HOME/.p10k.zsh" << 'EOF'
 # Generated by Powerlevel10k configuration wizard on 2026-08-17 at 19:12 UTC.
 # Based on romkatv/powerlevel10k/config/p10k-classic.zsh, checksum 08429.
 # Wizard options: powerline, classic, ascii, dark, 24h time, 1 line, compact, concise,
@@ -387,33 +517,316 @@ typeset -g POWERLEVEL9K_CONFIG_FILE=${${(%):-%x}:a}
 (( ${#p10k_config_opts} )) && setopt ${p10k_config_opts[@]}
 'builtin' 'unset' 'p10k_config_opts'
 EOF
+    check_success ".p10k.zsh configured"
+}
 
-check_success ".p10k.zsh installed"
+# Set Zsh as default shell
+set_default_shell() {
+    local zsh_path=$(which zsh)
+    if [[ "$SHELL" != "$zsh_path" ]]; then
+        info_msg "Changing default shell to $zsh_path..."
+        chsh -s "$zsh_path"
+        check_success "Default shell changed (requires logout/login to take effect)"
+        SHELL_CHANGED=1
+        PREVIOUS_SHELL="$SHELL"
+    else
+        info_msg "Zsh is already the default shell."
+        SHELL_CHANGED=0
+        PREVIOUS_SHELL=""
+    fi
+}
 
-# 10. Set Zsh as default shell
-echo -e "\n${GREEN}==> Setting Zsh as default shell...${NC}"
-if [[ "$SHELL" != "/bin/zsh" && "$SHELL" != "/usr/bin/zsh" ]]; then
-    chsh -s $(which zsh)
-    check_success "Default shell changed to zsh (requires logout/login)"
-else
-    echo -e "${YELLOW}Zsh is already the default shell${NC}"
+#-------------------------------------------
+# Uninstall / revert functions
+#-------------------------------------------
+
+# Remove Oh My Zsh if it was installed by this script
+uninstall_ohmyzsh() {
+    if [ "$OMZ_INSTALLED" -eq 1 ]; then
+        if [ -d "$USER_HOME/.oh-my-zsh" ]; then
+            warning_msg "Removing Oh My Zsh directory..."
+            rm -rf "$USER_HOME/.oh-my-zsh"
+            success_msg "Oh My Zsh removed."
+        else
+            info_msg "Oh My Zsh directory not found (maybe already removed)."
+        fi
+    else
+        info_msg "Oh My Zsh was pre-existing; not removed."
+    fi
+}
+
+# Remove a plugin directory if it was installed by this script
+uninstall_plugin() {
+    local name="$1"
+    local flag_var="$2"
+    local dir="$3"
+    if [ "${!flag_var}" -eq 1 ]; then
+        if [ -d "$dir" ]; then
+            warning_msg "Removing $name..."
+            rm -rf "$dir"
+            success_msg "$name removed."
+        else
+            info_msg "$name directory not found."
+        fi
+    else
+        info_msg "$name was pre-existing; not removed."
+    fi
+}
+
+# Remove Powerlevel10k theme if installed by this script
+uninstall_powerlevel10k() {
+    uninstall_plugin "Powerlevel10k" "P10K_INSTALLED" "$ZSH_CUSTOM/themes/powerlevel10k"
+}
+
+# Restore .zshrc from backup
+restore_zshrc() {
+    if [ -n "$ZSHRC_BACKUP" ] && [ -f "$ZSHRC_BACKUP" ]; then
+        warning_msg "Restoring .zshrc from backup $ZSHRC_BACKUP..."
+        cp "$ZSHRC_BACKUP" "$USER_HOME/.zshrc"
+        success_msg ".zshrc restored."
+        # Optionally keep backup, but we'll leave it
+    elif [ -z "$ZSHRC_BACKUP" ]; then
+        # No backup means .zshrc didn't exist before, so we should remove the one we created
+        if [ -f "$USER_HOME/.zshrc" ]; then
+            warning_msg "No backup found; .zshrc was created by this script. Removing it..."
+            rm -f "$USER_HOME/.zshrc"
+            success_msg ".zshrc removed."
+        fi
+    else
+        warning_msg "Backup file $ZSHRC_BACKUP not found. Cannot restore .zshrc automatically."
+    fi
+}
+
+# Restore .p10k.zsh from backup
+restore_p10k() {
+    if [ -n "$P10K_BACKUP" ] && [ -f "$P10K_BACKUP" ]; then
+        warning_msg "Restoring .p10k.zsh from backup $P10K_BACKUP..."
+        cp "$P10K_BACKUP" "$USER_HOME/.p10k.zsh"
+        success_msg ".p10k.zsh restored."
+    elif [ -z "$P10K_BACKUP" ]; then
+        if [ -f "$USER_HOME/.p10k.zsh" ]; then
+            warning_msg "No backup found; .p10k.zsh was created by this script. Removing it..."
+            rm -f "$USER_HOME/.p10k.zsh"
+            success_msg ".p10k.zsh removed."
+        fi
+    else
+        warning_msg "Backup file $P10K_BACKUP not found. Cannot restore .p10k.zsh automatically."
+    fi
+}
+
+# Restore default shell (if changed)
+restore_shell() {
+    if [ "$SHELL_CHANGED" -eq 1 ]; then
+        if [ -n "$PREVIOUS_SHELL" ] && [ -x "$PREVIOUS_SHELL" ]; then
+            warning_msg "Reverting default shell to $PREVIOUS_SHELL..."
+            chsh -s "$PREVIOUS_SHELL"
+            check_success "Default shell reverted."
+        else
+            warning_msg "Previous shell not available. Please change manually with chsh."
+        fi
+    else
+        info_msg "Default shell was not changed by this script."
+    fi
+}
+
+# Remove packages installed by this script (with individual choice)
+remove_packages_menu() {
+    if [ ${#INSTALLED_PACKAGES[@]} -eq 0 ]; then
+        info_msg "No packages were newly installed by this script."
+        return
+    fi
+
+    echo -e "\n${YELLOW}Select packages to remove (these were installed by the script):${NC}"
+    local i=1
+    local selections=()
+    for pkg in "${INSTALLED_PACKAGES[@]}"; do
+        echo "  $i) $pkg"
+        selections+=("$pkg")
+        i=$((i+1))
+    done
+    echo "  $i) All of the above"
+    echo "  $((i+1))) None (skip)"
+    echo -n "Enter your choice [1-$((i+1))]: "
+    read choice
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le $((i+1)) ]; then
+        if [ "$choice" -eq $i ]; then
+            # Remove all
+            for pkg in "${selections[@]}"; do
+                sudo apt remove -y "$pkg"
+                check_success "Package $pkg removed"
+            done
+        elif [ "$choice" -eq $((i+1)) ]; then
+            info_msg "No packages removed."
+        else
+            # Remove selected single package
+            local idx=$((choice-1))
+            local pkg="${selections[$idx]}"
+            sudo apt remove -y "$pkg"
+            check_success "Package $pkg removed"
+        fi
+    else
+        warning_msg "Invalid choice. No packages removed."
+    fi
+}
+
+#-------------------------------------------
+# Main installation routine
+#-------------------------------------------
+run_install() {
+    echo -e "\n${GREEN}Starting installation...${NC}"
+
+    # Initialize state variables (will be overwritten if state file exists)
+    load_state
+
+    # Perform installation steps
+    install_packages
+    install_ohmyzsh
+    install_autosuggestions
+    install_syntax_highlighting
+    install_powerlevel10k
+    configure_zshrc
+    configure_p10k
+    set_default_shell
+
+    # Save state
+    save_state
+
+    echo -e "\n${GREEN}========================================${NC}"
+    echo -e "${GREEN}  Installation Complete!               ${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "Please log out and back in for changes to take effect."
+    echo -e "Run ${YELLOW}p10k configure${NC} if the wizard doesn't start automatically."
+}
+
+#-------------------------------------------
+# Main uninstall menu
+#-------------------------------------------
+run_uninstall_menu() {
+    # Load current state
+    load_state
+
+    while true; do
+        clear
+        echo -e "${GREEN}========================================${NC}"
+        echo -e "${GREEN}  Uninstall / Revert Changes Menu      ${NC}"
+        echo -e "${GREEN}========================================${NC}"
+        echo "Select components to revert/remove:"
+        echo "  1) Oh My Zsh"
+        echo "  2) zsh-autosuggestions plugin"
+        echo "  3) zsh-syntax-highlighting plugin"
+        echo "  4) Powerlevel10k theme"
+        echo "  5) Restore .zshrc (from backup or remove if created)"
+        echo "  6) Restore .p10k.zsh (from backup or remove if created)"
+        echo "  7) Restore default shell"
+        echo "  8) Remove installed packages (selective)"
+        echo "  9) Revert ALL changes (combination of all above)"
+        echo "  0) Return to main menu"
+        echo -n "Enter your choice [0-9]: "
+        read choice
+
+        case $choice in
+            1)
+                uninstall_ohmyzsh
+                ;;
+            2)
+                uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+                ;;
+            3)
+                uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+                ;;
+            4)
+                uninstall_powerlevel10k
+                ;;
+            5)
+                restore_zshrc
+                ;;
+            6)
+                restore_p10k
+                ;;
+            7)
+                restore_shell
+                ;;
+            8)
+                remove_packages_menu
+                ;;
+            9)
+                echo -e "${YELLOW}This will revert all changes made by the script.${NC}"
+                echo -n "Are you sure? (y/N): "
+                read confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    uninstall_ohmyzsh
+                    uninstall_plugin "zsh-autosuggestions" "AUTOSUGGESTIONS_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+                    uninstall_plugin "zsh-syntax-highlighting" "SYNTAX_HIGHLIGHTING_INSTALLED" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+                    uninstall_powerlevel10k
+                    restore_zshrc
+                    restore_p10k
+                    restore_shell
+                    remove_packages_menu
+                    info_msg "All changes reverted. You may need to log out and back in."
+                    # Optionally remove state file after full uninstall
+                    rm -f "$STATE_FILE"
+                    info_msg "State file removed."
+                else
+                    info_msg "Full uninstall cancelled."
+                fi
+                ;;
+            0)
+                return
+                ;;
+            *)
+                warning_msg "Invalid option. Please try again."
+                ;;
+        esac
+
+        echo -e "\nPress Enter to continue..."
+        read
+    done
+}
+
+#-------------------------------------------
+# Main menu
+#-------------------------------------------
+main_menu() {
+    while true; do
+        clear
+        echo -e "${GREEN}========================================${NC}"
+        echo -e "${GREEN}  Terminal Setup Script for Debian/Ubuntu${NC}"
+        echo -e "${GREEN}========================================${NC}"
+        echo "Please choose an option:"
+        echo "  1) Install / Configure terminal environment"
+        echo "  2) Uninstall / Revert changes"
+        echo "  3) Exit"
+        echo -n "Enter your choice [1-3]: "
+        read choice
+
+        case $choice in
+            1)
+                run_install
+                ;;
+            2)
+                run_uninstall_menu
+                ;;
+            3)
+                echo -e "${GREEN}Goodbye!${NC}"
+                exit 0
+                ;;
+            *)
+                warning_msg "Invalid option. Please enter 1, 2, or 3."
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+#-------------------------------------------
+# Script entry point
+#-------------------------------------------
+
+# Check if running as root
+if [[ $EUID -eq 0 ]]; then
+    error_msg "Do not run this script as root! Run as a normal user with sudo privileges."
 fi
 
-# 11. Final instructions
-echo -e "\n${GREEN}========================================${NC}"
-echo -e "${GREEN}  Setup Complete!                      ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo -e ""
-echo -e "${YELLOW}IMPORTANT:${NC}"
-echo -e "1. Log out and log back in for changes to take effect"
-echo -e "2. On first login, the Powerlevel10k wizard will run"
-echo -e "3. If the wizard doesn't start, run: ${GREEN}p10k configure${NC}"
-echo -e ""
-echo -e "Custom functions available:"
-echo -e "  ${GREEN}ff${NC} - Fuzzy find files with preview"
-echo -e ""
-echo -e "${YELLOW}Backup files created:${NC}"
-ls -la ~/.zshrc.backup.* 2>/dev/null || echo "No backup files"
-ls -la ~/.p10k.zsh.backup.* 2>/dev/null || echo "No backup files"
-echo -e ""
-echo -e "${GREEN}Enjoy your new terminal setup! 🚀${NC}"
+# Start the main menu
+main_menu
